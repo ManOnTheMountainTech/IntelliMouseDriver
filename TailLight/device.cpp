@@ -1,46 +1,83 @@
 #include "driver.h"
 #include <Hidport.h>
 
+#include "debug.h"
+#include "SetBlack.h"
+
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL EvtIoDeviceControlFilter;
 
+NTSTATUS PnpNotifyDeviceInterfaceChange(
+    _In_ PVOID pvNotificationStructure,
+    _Inout_opt_ PVOID pvContext) {
 
-VOID EvtSetBlackTimer(_In_ WDFTIMER  Timer) {
-    KdPrint(("TailLight: EvtSetBlackTimer begin\n"));
+    //KdPrint(("TailLight: PnpNotifyDeviceInterfaceChange enter\n"));
+    NT_ASSERTMSG("WDFDEVICE not passed in!", pvContext);
 
-    WDFDEVICE device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
-    NT_ASSERTMSG("EvtSetBlackTimer device NULL\n", device);
-
-    NTSTATUS status = SetFeatureColor(device, 0);
-    if (!NT_SUCCESS(status)) {
-        KdPrint(("TailLight: EvtSetBlackTimer failure NTSTATUS=0x%x\n", status));
-        return;
+    if (pvNotificationStructure == NULL) {
+        return STATUS_SUCCESS;
     }
 
-    KdPrint(("TailLight: EvtSetBlackTimer end\n"));
+    PDEVICE_INTERFACE_CHANGE_NOTIFICATION pDevInterface =
+        (PDEVICE_INTERFACE_CHANGE_NOTIFICATION)pvNotificationStructure;
+
+    WDFDEVICE& device = (WDFDEVICE&)pvContext;
+
+    ASSERT(IsEqualGUID(*(_GUID*)&(pDevInterface->InterfaceClassGuid),
+        *(_GUID*)&GUID_DEVINTERFACE_HID));
+
+    auto& symLinkName = pDevInterface->SymbolicLinkName;
+    if (symLinkName->Length < sizeof(MSINTELLIMOUSE_USBINTERFACE5_PREFIX)) {
+        return STATUS_SUCCESS;
+    }
+
+    // Ensure that the Microsoft Mouse USB interface #5 has arrived.
+    if (!memcmp((PVOID)MSINTELLIMOUSE_USBINTERFACE5_PREFIX,
+        symLinkName->Buffer,
+        sizeof(MSINTELLIMOUSE_USBINTERFACE5_PREFIX) - 2)) {
+
+        //auto& notification = pDevInterface->Event;
+        //KdPrint(("TailLight: Notification 0x%x 0x%x 0x%x 0x%x\n", notification.Data1, notification.Data2, notification.Data3, notification.Data4));
+
+        // Assumption: Device will arrive before removal.
+        if (IsEqualGUID(*(LPGUID)&(pDevInterface->Event),
+            *(LPGUID)&GUID_DEVICE_INTERFACE_ARRIVAL)) {
+
+            // Opening a device may trigger PnP operations. Ensure that either a
+            // timer or a work item is used when opening up a device.
+            // Refer to p356 of Oney and IoGetDeviceObjectPointer.
+            //
+            // NOTE: It is possible for us to get blocked waiting for a system
+            // thread. One solution would be to use a timer that spawns a
+            // system thread on timeout vs. a wait loop.
+            return CreateWorkItemForIoTargetOpenDevice(device);
+        }
+    }
+
+    return STATUS_SUCCESS;
 }
 
+
 NTSTATUS EvtSelfManagedIoInit(WDFDEVICE device) {
-    // Initialize tail-light to black to have control over HW state
-    WDF_TIMER_CONFIG timerCfg = {};
-    WDF_TIMER_CONFIG_INIT(&timerCfg, EvtSetBlackTimer);
 
-    WDF_OBJECT_ATTRIBUTES attribs = {};
-    WDF_OBJECT_ATTRIBUTES_INIT(&attribs);
-    attribs.ParentObject = device;
-    attribs.ExecutionLevel = WdfExecutionLevelPassive; // required to access HID functions
+    WDFDRIVER driver = WdfDeviceGetDriver(device);
+    PDRIVER_CONTEXT driverContext = WdfObjectGet_DRIVER_CONTEXT(driver);
+    UNREFERENCED_PARAMETER(device);
 
-    WDFTIMER timer = nullptr;
-    NTSTATUS status = WdfTimerCreate(&timerCfg, &attribs, &timer);
-    if (!NT_SUCCESS(status)) {
-        KdPrint(("WdfTimerCreate failed 0x%x\n", status));
-        return status;
-    }
+    //TRACE_FN_ENTRY;
 
-    status = WdfTimerStart(timer, 0); // no wait
-    if (!NT_SUCCESS(status)) {
-        KdPrint(("WdfTimerStart failed 0x%x\n", status));
-        return status;
-    }
+    NTSTATUS status = STATUS_SUCCESS;
+
+    status = IoRegisterPlugPlayNotification(
+        EventCategoryDeviceInterfaceChange,
+        PNPNOTIFY_DEVICE_INTERFACE_INCLUDE_EXISTING_INTERFACES,
+        (PVOID)&GUID_DEVINTERFACE_HID,
+        WdfDriverWdmGetDriverObject(driver),
+        PnpNotifyDeviceInterfaceChange,
+        (PVOID)device,
+        &driverContext->pnpDevInterfaceChangedHandle
+    );
+
+    //TRACE_FN_EXIT;
 
     return status;
 }
@@ -144,7 +181,6 @@ Arguments:
     NTSTATUS status = WmiInitialize(device);
     if (!NT_SUCCESS(status)) {
         KdPrint(("TailLight: Error initializing WMI 0x%x\n", status));
-        return status;
     }
 
     return status;
