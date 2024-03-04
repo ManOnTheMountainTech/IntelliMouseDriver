@@ -7,7 +7,7 @@
 EVT_WDF_REQUEST_COMPLETION_ROUTINE  SetBlackCompletionRoutine;
 EVT_WDF_WORKITEM                    SetBlackWorkItem;
 
-NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device)
+NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device, CONST UNICODE_STRING& symLink)
     /*++
 
     Routine Description:
@@ -25,7 +25,7 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device)
     --*/
 {
 
-    //TRACE_FN_ENTRY
+    TRACE_FN_ENTRY
     
     WDFWORKITEM hWorkItem = 0;
     NTSTATUS status = STATUS_PNP_DRIVER_CONFIGURATION_INCOMPLETE;
@@ -33,12 +33,14 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device)
         WDF_WORKITEM_CONFIG        workItemConfig;
         WDF_OBJECT_ATTRIBUTES      workItemAttributes;
         WDF_OBJECT_ATTRIBUTES_INIT(&workItemAttributes);
+        WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&workItemAttributes,
+            SET_BLACK_WORKITEM_CONTEXT);
         workItemAttributes.ParentObject = device;
 
         DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
 
         // It's possible to get called twice. Been there, done that?
-        if (pDeviceContext->fSetBlackSuccess) {
+        if ((!pDeviceContext) || pDeviceContext->fSetBlackSuccess) {
             return STATUS_SUCCESS;
         }
 
@@ -56,30 +58,63 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device)
             return status; // Maybe better luck next time.
         }
 
-        InterlockedIncrement((PLONG)(&pDeviceContext->fSetBlackSuccess));
+        auto workItemContext = WdfObjectGet_SET_BLACK_WORKITEM_CONTEXT(hWorkItem);
+        workItemContext->symLink = symLink;
     }
 
     WdfWorkItemEnqueue(hWorkItem);
 
-    //TRACE_FN_EXIT
+    TRACE_FN_EXIT
 
     return status;
 }
 
+NTSTATUS RetrieveUsbHardwareIds(WDFIOTARGET target, USB_HARDWARE_ID_INFO& hwId) {
+
+    WDF_OBJECT_ATTRIBUTES attributes = {};
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = target; // auto-delete with target if all else fails
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    WDFMEMORY memory = 0;
+    status = WdfIoTargetAllocAndQueryTargetProperty(target,
+        DevicePropertyHardwareID,
+        NonPagedPoolNx,
+        &attributes,
+        &memory);
+
+    if (!NT_SUCCESS(status)) {
+        KdPrint(("TailLight: WdfIoTargetQueryTargetProperty DevicePropertyHardwareID failed 0x%x\n", status));
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    status = ExtractHardwareIds(memory, hwId);
+    if (!NT_SUCCESS(status)) {
+        goto ExitAndFree;
+    }
+
+ExitAndFree:
+    NukeWdfHandle<WDFMEMORY>(memory);
+    return status;
+}
+
 static NTSTATUS TryToOpenIoTarget(WDFIOTARGET target, 
-    DEVICE_CONTEXT& DeviceContext) {
+    CONST UNICODE_STRING symLink) {
 
     PAGED_CODE();
 
     WDF_IO_TARGET_OPEN_PARAMS   openParams = {};
-    WDF_IO_TARGET_OPEN_PARAMS_INIT_CREATE_BY_NAME(
+    WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
         &openParams,
-        &DeviceContext.PdoName,
-        FILE_WRITE_ACCESS);
+        &symLink,
+        STANDARD_RIGHTS_ALL);
 
     openParams.ShareAccess = FILE_SHARE_WRITE | FILE_SHARE_READ;
 
     NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    KdPrint(("Taillight: Opening Interface %wZ\n",
+        symLink));
 
     // Ensure freed if fails.
     status = WdfIoTargetOpen(target, &openParams);
@@ -88,7 +123,6 @@ static NTSTATUS TryToOpenIoTarget(WDFIOTARGET target,
             DPFLTR_ERROR_LEVEL,
             "TailLight: 0x%x while opening the I/O target from worker thread\n",
             status));
-        NukeWdfHandle<WDFIOTARGET>(target);
     }
 
     return status;
@@ -130,18 +164,29 @@ VOID SetBlackWorkItem(
 
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     WDFDEVICE device = static_cast<WDFDEVICE>(WdfWorkItemGetParentObject(workItem));
+    auto workItemContext = WdfObjectGet_SET_BLACK_WORKITEM_CONTEXT(workItem);
+    //DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
 
-    status = SetBlackAsync(device);
-    NukeWdfHandle(workItem);
+    status = SetBlackAsync(device, workItemContext->symLink);
 
-    //TRACE_FN_EXIT
+    /*if (NT_SUCCESS(status)) {
+    * TODO: Match hardware string based on interface.
+        InterlockedIncrement((PLONG)(&pDeviceContext->fSetBlackSuccess));
+    }*/
+
+    NukeWdfHandle<WDFWORKITEM>(workItem);
+
+    TRACE_FN_EXIT
 }
 
-NTSTATUS SetBlackAsync(WDFDEVICE device) {
+NTSTATUS SetBlackAsync(WDFDEVICE device, 
+    CONST UNICODE_STRING& symLink) {
 
     TRACE_FN_ENTRY
 
-    NTSTATUS        status = STATUS_FAILED_DRIVER_ENTRY;
+    PAGED_CODE();
+
+    NTSTATUS        status = STATUS_UNSUCCESSFUL;
     WDFIOTARGET     hidTarget = NULL;
 
     DEVICE_CONTEXT* pDeviceContext = NULL;
@@ -153,10 +198,13 @@ NTSTATUS SetBlackAsync(WDFDEVICE device) {
         return STATUS_DEVICE_NOT_READY;
     }
     {
+        WDF_OBJECT_ATTRIBUTES attributes; 
+        WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+
         // Ensure freed if fails.
         status = WdfIoTargetCreate(
             device,
-            WDF_NO_OBJECT_ATTRIBUTES,
+            &attributes,
             &hidTarget);
 
         if (!NT_SUCCESS(status)) {
@@ -167,10 +215,36 @@ NTSTATUS SetBlackAsync(WDFDEVICE device) {
             return status;
         }
 
-        status = TryToOpenIoTarget(hidTarget, *pDeviceContext);
+        status = TryToOpenIoTarget(hidTarget, symLink);
     }
 
     if (NT_SUCCESS(status)) {
+
+        WDFDEVICE targetDevice = WdfIoTargetGetDevice(hidTarget);
+        PDEVICE_OBJECT targetDevObj = WdfDeviceWdmGetDeviceObject(targetDevice);
+        if (targetDevObj != pDeviceContext->ourFDO) {
+            status = STATUS_NOT_FOUND;
+            goto ExitAndFree;
+        }
+        else {
+            // TODO: Remove when working
+            KdPrint(("Taillight: Target device match found\n"));
+        }
+
+        /*
+        USB_HARDWARE_ID_INFO hwIds = {};
+
+        status = RetrieveUsbHardwareIds(hidTarget, hwIds);
+        if (!NT_SUCCESS(status)) {
+            goto ExitAndFree;
+        }
+
+        auto& deviceHwId = pDeviceContext->hwId;
+        if (!(deviceHwId.idVendor == hwIds.idVendor &&
+            deviceHwId.idProduct == hwIds.idProduct)) {
+            status = STATUS_NOT_FOUND;
+            goto ExitAndFree;
+        }*/
 
         WDFREQUEST  request = NULL;
 
@@ -230,6 +304,8 @@ NTSTATUS SetBlackAsync(WDFDEVICE device) {
             goto ExitAndFree;
         }
 
+        // Useful for finding the caller to IoCallDriver versus searching
+        // through all of the threads.
         pDeviceContext->previousThread = KeGetCurrentThread();
 
         if (!WdfRequestSend(request, hidTarget, WDF_NO_SEND_OPTIONS)) {
@@ -239,10 +315,7 @@ NTSTATUS SetBlackAsync(WDFDEVICE device) {
     }
 
 ExitAndFree:
-    if (hidTarget != NULL) {
-        WdfObjectDelete(hidTarget);
-        hidTarget = NULL;
-    }
+    NukeWdfHandle<WDFIOTARGET>(hidTarget);
 
     TRACE_FN_EXIT
 

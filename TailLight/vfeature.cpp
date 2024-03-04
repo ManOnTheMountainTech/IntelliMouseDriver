@@ -190,7 +190,7 @@ Arguments:
     Request - Pointer to Request Packet.
 --*/
 {
-    KdPrint(("TailLight: SetFeatureFilter\n"));
+    //KdPrint(("TailLight: SetFeatureFilter\n"));
     DEVICE_CONTEXT* deviceContext = WdfObjectGet_DEVICE_CONTEXT(Device);
 
     if (InputBufferLength != sizeof(TailLightReport)) {
