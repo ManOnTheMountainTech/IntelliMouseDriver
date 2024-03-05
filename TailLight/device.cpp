@@ -70,7 +70,7 @@ NTSTATUS EvtSelfManagedIoInit(WDFDEVICE device) {
     return status;
 }
 
-NTSTATUS DeviceContext_StorePDOName(WDFDEVICE device, DEVICE_CONTEXT& dc) 
+NTSTATUS AllocatePDOName(WDFDEVICE device, UNICODE_STRING& pdoName) 
 // initialize DEVICE_CONTEXT struct with PdoName
 {
     // In order to send ioctls to our PDO, we have open to open it
@@ -80,106 +80,41 @@ NTSTATUS DeviceContext_StorePDOName(WDFDEVICE device, DEVICE_CONTEXT& dc)
     WDF_OBJECT_ATTRIBUTES attributes = {};
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = device; // auto-delete with device
+    NTSTATUS status = STATUS_SUCCESS;
 
     WDFMEMORY memory = 0;
-    NTSTATUS status = WdfDeviceAllocAndQueryProperty(device,
+    status = WdfDeviceAllocAndQueryProperty(device,
         DevicePropertyPhysicalDeviceObjectName,
         NonPagedPoolNx,
         &attributes,
         &memory);
 
     if (!NT_SUCCESS(status)) {
-        KdPrint(("TailLight: WdfDeviceAllocAndQueryProperty DevicePropertyPhysicalDeviceObjectName failed 0x%x\n", status));
-        return STATUS_UNSUCCESSFUL;
+        KdPrint(("TailLight: WdfDeviceAllocAndQueryProperty"
+            "DevicePropertyPhysicalDeviceObjectName failed 0x%x\n", status));
+        return status;
     }
 
     // initialize pDeviceContext->PdoName based on memory
     size_t bufferLength = 0;
-    dc.PdoName.Buffer = (WCHAR*)WdfMemoryGetBuffer(memory, &bufferLength);
-    if (dc.PdoName.Buffer == NULL)
+    pdoName.Buffer = (WCHAR*)WdfMemoryGetBuffer(memory, &bufferLength);
+    if (pdoName.Buffer == NULL)
         return STATUS_UNSUCCESSFUL;
 
-    dc.PdoName.MaximumLength = (USHORT)bufferLength;
-    dc.PdoName.Length = (USHORT)bufferLength - sizeof(UNICODE_NULL);
+    pdoName.MaximumLength = (USHORT)bufferLength;
+    pdoName.Length = (USHORT)bufferLength - sizeof(UNICODE_NULL);
 
-    KdPrint(("TailLight: PdoName: %wZ\n", dc.PdoName)); // outputs "\Device\00000083
+    KdPrint(("TailLight: PdoName: %wZ\n", pdoName)); // outputs "\Device\00000083
 
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS ExtractDigitFromHardwareId(PCHAR pHardwareId,
-    USHORT offset, 
-    UCHAR numDigits,
-    CONST USHORT& resultantDigits) {
-    /*++
-    Routine Description:
-
-    Arguments:
-        us - string to fixup
-        numDigits - Number of digits to be extracted but must be less than 4
-        resultantDigits - Where to place the extracted digits
-    --*/
-    NT_ASSERT(pHardwareId > (PCHAR)65535);
- 
-    pHardwareId = pHardwareId + offset;
-
-    static const UCHAR digitBuffSize = 4;
-    NT_ASSERT(digitBuffSize >= numDigits);
-    CHAR digitBuff[digitBuffSize] = {};
-
-    NTSTATUS status = STATUS_SUCCESS;
-    status = RtlStringCbCopyA(digitBuff, numDigits, pHardwareId);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    status = RtlCharToInteger(digitBuff, 16, (PULONG)resultantDigits);
     return status;
 }
 
-NTSTATUS ExtractHardwareIds(WDFMEMORY memory, 
-    USB_HARDWARE_ID_INFO& hwIds) {
-   
-    NTSTATUS status = STATUS_SUCCESS;
-    PCHAR  pHardwareId = nullptr;
-    USHORT hardwareIdLen = 0;
-
-    pHardwareId = (PCHAR)WdfMemoryGetBuffer(memory, 
-        (SIZE_T*)&hardwareIdLen);
-    if (pHardwareId == nullptr)
-        return STATUS_UNSUCCESSFUL;
-
-    KdPrint(("TailLight: Hardware ID %s\n", pHardwareId));
-
-
-    static const USHORT vendor_offset = sizeof("HID\\VID_") - sizeof(CHAR);
-    status = ExtractDigitFromHardwareId(pHardwareId, vendor_offset, 4, hwIds.idVendor);
-    if (!NT_SUCCESS(status)) {
-        goto ExitAndFree;
-    }
-
-    static const ULONG device_offset = sizeof("045E&PID_") - sizeof(CHAR);
-    status = ExtractDigitFromHardwareId(pHardwareId, device_offset, 4, hwIds.idProduct);
-    if (!NT_SUCCESS(status)) {
-        goto ExitAndFree;
-    }
-
-    static const ULONG interface_offset = sizeof("082A&REV_0095&MI_") - sizeof(CHAR);
-    status = ExtractDigitFromHardwareId(pHardwareId, device_offset, 2, hwIds.bInterface);
-    if (!NT_SUCCESS(status)) {
-        goto ExitAndFree;
-    }
-
-    ExitAndFree:
-    return status;
-}
-
-NTSTATUS RetrieveUsbHardwareIds(WDFDEVICE device, USB_HARDWARE_ID_INFO& hwId)
+NTSTATUS AllocateHwIdString(WDFDEVICE device, UNICODE_STRING& hwId)
 {
     WDF_OBJECT_ATTRIBUTES attributes = {};
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = device; // auto-delete with device
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    NTSTATUS status = STATUS_SUCCESS;
 
     WDFMEMORY memory = 0;
     status = WdfDeviceAllocAndQueryProperty(device,
@@ -188,21 +123,63 @@ NTSTATUS RetrieveUsbHardwareIds(WDFDEVICE device, USB_HARDWARE_ID_INFO& hwId)
         &attributes,
         &memory);
     if (!NT_SUCCESS(status)) {
-        KdPrint(("TailLight: WdfDeviceAllocAndQueryProperty DevicePropertyHardwareID failed 0x%x\n", status));
+        KdPrint(("TailLight: WdfDeviceAllocAndQueryProperty"
+            "DevicePropertyHardwareID failed 0x%x\n", 
+            status));
+        return status;
+    }
+
+    hwId.Buffer = (PWCHAR)WdfMemoryGetBuffer(memory, (SIZE_T*) & (hwId.MaximumLength));
+    if (hwId.Buffer == nullptr)
         return STATUS_UNSUCCESSFUL;
-    }
 
-    UNICODE_STRING hardwareId = {};
+    hwId.Length = (USHORT)hwId.MaximumLength - sizeof(UNICODE_NULL);
 
-    status = ExtractHardwareIds(memory, hwId);
+    KdPrint(("TailLight: Device hardware ID %S\n", hwId.Buffer));
+
+    return status;
+}
+
+// TODO: Consider passing in the property and making a generic property retrieval
+NTSTATUS AllocateHwIdString(WDFIOTARGET target, UNICODE_STRING& hwId)
+/*++
+Routine Description:
+    Creates from non-paged memory a MULTI_SZ unicode hardware Id of the I/O 
+    target and sets the default object lifetime to the IO target.
+
+Arguments:
+    WDFIOTARGET - A WDF IO target
+
+    STRING - Where to place the allocated string.
+--*/
+{
+    WDF_OBJECT_ATTRIBUTES attributes = {};
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = target; // auto-delete with device
+    NTSTATUS status = STATUS_SUCCESS;
+
+    WDFMEMORY memory = 0;
+    status = WdfIoTargetAllocAndQueryTargetProperty(target,
+        DevicePropertyHardwareID,
+        NonPagedPoolNx,
+        &attributes,
+        &memory);
     if (!NT_SUCCESS(status)) {
-        goto ExitAndFree;
+        KdPrint(("TailLight: WdfDeviceAllocAndQueryProperty"
+            "DevicePropertyHardwareID failed 0x%x\n",
+            status));
+        return status;
     }
 
-    ExitAndFree:
-    NukeWdfHandle(memory);
+    hwId.Buffer = (PWCHAR)WdfMemoryGetBuffer(memory, (SIZE_T*) & (hwId.MaximumLength));
+    if (hwId.Buffer == nullptr)
+        return STATUS_UNSUCCESSFUL;
 
-    return STATUS_SUCCESS;
+    hwId.Length = (USHORT)hwId.MaximumLength - sizeof(UNICODE_NULL);
+
+    KdPrint(("TailLight: IO target Hardware ID %S\n", hwId.Buffer));
+
+    return status;
 }
 
 NTSTATUS EvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit)
@@ -224,7 +201,6 @@ Arguments:
 
     // Configure the device as a filter driver
     WdfFdoInitSetFilter(DeviceInit);
-    auto pdo = WdfFdoInitWdmGetPhysicalDevice(DeviceInit);
 
     {
         // register PnP callbacks (must be done before WdfDeviceCreate)
@@ -242,25 +218,23 @@ Arguments:
 
         status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
         if (!NT_SUCCESS(status)) {
-            KdPrint(("TailLight: WdfDeviceCreate, Error %x\n", status));
+            KdPrint(("TailLight: WdfDeviceCreate, Error %wZ\n", status));
             return status;
         }
     }
 
     // Driver Framework always zero initializes an objects context memory
     DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
-    pDeviceContext->pPDO = pdo;
-    pDeviceContext->ourFDO = WdfDeviceWdmGetDeviceObject(device);
 
-    status = DeviceContext_StorePDOName(device, *pDeviceContext);
+    status = AllocatePDOName(device, pDeviceContext->PdoName);
     if (!NT_SUCCESS(status)) {
         return status;
     }
 
-    /*status = RetrieveUsbHardwareIds(device, pDeviceContext->hwId);
+    status = AllocateHwIdString(device, pDeviceContext->OurHardwareId);
     if (!NT_SUCCESS(status)) {
         return status;
-    }*/
+    }
 
     {
         // create queue for filtering

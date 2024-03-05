@@ -13,8 +13,7 @@
 #include "vfeature.h"
 
 /** Memory allocation tag name (for debugging leaks). */
-static constexpr ULONG POOL_TAG = 'ylff';
-static constexpr ULONG WDF_POOL_TAG = 'wTLT'; // Taillight WPF allocated
+static constexpr ULONG POOL_TAG = 'ffly';
 
 typedef struct _DRIVER_CONTEXT {
     PVOID pnpDevInterfaceChangedHandle;

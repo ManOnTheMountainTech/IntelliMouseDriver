@@ -1,13 +1,13 @@
 #include "driver.h"
 #include <Hidport.h>
 
-#include "debug.h"
 #include "SetBlack.h"
 
 EVT_WDF_REQUEST_COMPLETION_ROUTINE  SetBlackCompletionRoutine;
 EVT_WDF_WORKITEM                    SetBlackWorkItem;
 
-NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device, CONST UNICODE_STRING& symLink)
+NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device, 
+    CONST UNICODE_STRING& symLink)
     /*++
 
     Routine Description:
@@ -23,10 +23,7 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device, CONST UNICODE_STR
         Must be synchronized to the device.
 
     --*/
-{
-
-    TRACE_FN_ENTRY
-    
+{    
     WDFWORKITEM hWorkItem = 0;
     NTSTATUS status = STATUS_PNP_DRIVER_CONFIGURATION_INCOMPLETE;
     {
@@ -64,37 +61,6 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device, CONST UNICODE_STR
 
     WdfWorkItemEnqueue(hWorkItem);
 
-    TRACE_FN_EXIT
-
-    return status;
-}
-
-NTSTATUS RetrieveUsbHardwareIds(WDFIOTARGET target, USB_HARDWARE_ID_INFO& hwId) {
-
-    WDF_OBJECT_ATTRIBUTES attributes = {};
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-    attributes.ParentObject = target; // auto-delete with target if all else fails
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
-
-    WDFMEMORY memory = 0;
-    status = WdfIoTargetAllocAndQueryTargetProperty(target,
-        DevicePropertyHardwareID,
-        NonPagedPoolNx,
-        &attributes,
-        &memory);
-
-    if (!NT_SUCCESS(status)) {
-        KdPrint(("TailLight: WdfIoTargetQueryTargetProperty DevicePropertyHardwareID failed 0x%x\n", status));
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    status = ExtractHardwareIds(memory, hwId);
-    if (!NT_SUCCESS(status)) {
-        goto ExitAndFree;
-    }
-
-ExitAndFree:
-    NukeWdfHandle<WDFMEMORY>(memory);
     return status;
 }
 
@@ -112,9 +78,6 @@ static NTSTATUS TryToOpenIoTarget(WDFIOTARGET target,
     openParams.ShareAccess = FILE_SHARE_WRITE | FILE_SHARE_READ;
 
     NTSTATUS status = STATUS_UNSUCCESSFUL;
-
-    KdPrint(("Taillight: Opening Interface %wZ\n",
-        symLink));
 
     // Ensure freed if fails.
     status = WdfIoTargetOpen(target, &openParams);
@@ -160,29 +123,22 @@ VOID SetBlackWorkItem(
         workItem - Handle to a pre-allocated WDF work item.
     --*/
 {
-    TRACE_FN_ENTRY
-
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     WDFDEVICE device = static_cast<WDFDEVICE>(WdfWorkItemGetParentObject(workItem));
     auto workItemContext = WdfObjectGet_SET_BLACK_WORKITEM_CONTEXT(workItem);
-    //DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
 
     status = SetBlackAsync(device, workItemContext->symLink);
 
-    /*if (NT_SUCCESS(status)) {
-    * TODO: Match hardware string based on interface.
+    if (NT_SUCCESS(status)) {
+        DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
         InterlockedIncrement((PLONG)(&pDeviceContext->fSetBlackSuccess));
-    }*/
+    }
 
     NukeWdfHandle<WDFWORKITEM>(workItem);
-
-    TRACE_FN_EXIT
 }
 
 NTSTATUS SetBlackAsync(WDFDEVICE device, 
     CONST UNICODE_STRING& symLink) {
-
-    TRACE_FN_ENTRY
 
     PAGED_CODE();
 
@@ -219,32 +175,20 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
     }
 
     if (NT_SUCCESS(status)) {
+        
+        UNICODE_STRING theirHwId = {};
 
-        WDFDEVICE targetDevice = WdfIoTargetGetDevice(hidTarget);
-        PDEVICE_OBJECT targetDevObj = WdfDeviceWdmGetDeviceObject(targetDevice);
-        if (targetDevObj != pDeviceContext->ourFDO) {
-            status = STATUS_NOT_FOUND;
-            goto ExitAndFree;
+        status = AllocateHwIdString(hidTarget, theirHwId);
+        if (NT_SUCCESS(status)) {
+            if (!RtlEqualUnicodeString(&pDeviceContext->OurHardwareId,
+                &theirHwId,
+                TRUE)) {
+                status = STATUS_NOT_FOUND;
+                goto ExitAndFree;
+            }
+            
+            KdPrint(("TailLight: Sending SetBlack IOCTL down to %S\n", theirHwId.Buffer));
         }
-        else {
-            // TODO: Remove when working
-            KdPrint(("Taillight: Target device match found\n"));
-        }
-
-        /*
-        USB_HARDWARE_ID_INFO hwIds = {};
-
-        status = RetrieveUsbHardwareIds(hidTarget, hwIds);
-        if (!NT_SUCCESS(status)) {
-            goto ExitAndFree;
-        }
-
-        auto& deviceHwId = pDeviceContext->hwId;
-        if (!(deviceHwId.idVendor == hwIds.idVendor &&
-            deviceHwId.idProduct == hwIds.idProduct)) {
-            status = STATUS_NOT_FOUND;
-            goto ExitAndFree;
-        }*/
 
         WDFREQUEST  request = NULL;
 
@@ -311,13 +255,12 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
         if (!WdfRequestSend(request, hidTarget, WDF_NO_SEND_OPTIONS)) {
             WdfObjectDelete(request);
             request = NULL;
+            status = STATUS_UNSUCCESSFUL;
         }
     }
 
 ExitAndFree:
     NukeWdfHandle<WDFIOTARGET>(hidTarget);
-
-    TRACE_FN_EXIT
 
     return status;
 }
