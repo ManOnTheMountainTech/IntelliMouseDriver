@@ -218,7 +218,7 @@ Arguments:
 
         status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
         if (!NT_SUCCESS(status)) {
-            KdPrint(("TailLight: WdfDeviceCreate, Error %wZ\n", status));
+            KdPrint(("TailLight: WdfDeviceCreate, Error 0x%x\n", status));
             return status;
         }
     }
