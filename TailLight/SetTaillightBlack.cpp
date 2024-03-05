@@ -248,10 +248,6 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
             goto ExitAndFree;
         }
 
-        // Useful for finding the caller to IoCallDriver versus searching
-        // through all of the threads.
-        pDeviceContext->previousThread = KeGetCurrentThread();
-
         if (!WdfRequestSend(request, hidTarget, WDF_NO_SEND_OPTIONS)) {
             WdfObjectDelete(request);
             request = NULL;
