@@ -6,10 +6,10 @@
 EVT_WDF_REQUEST_COMPLETION_ROUTINE  SetBlackCompletionRoutine;
 EVT_WDF_WORKITEM                    SetBlackWorkItem;
 
+
 NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device, 
     CONST UNICODE_STRING& symLink)
-    /*++
-
+/*++
     Routine Description:
 
         Creates a WDF workitem to do the SetBlack() call after the driver
@@ -19,10 +19,7 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device,
 
         Device - Handle to a pre-allocated WDF work item.
 
-    Requirements:
-        Must be synchronized to the device.
-
-    --*/
+--*/
 {    
     WDFWORKITEM hWorkItem = 0;
     NTSTATUS status = STATUS_PNP_DRIVER_CONFIGURATION_INCOMPLETE;
@@ -39,7 +36,7 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device,
         // It's possible to get called twice. Please refer to 
         // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-ioregisterplugplaynotification,
         // under "Remarks"
-        if ((!pDeviceContext) || pDeviceContext->fSetBlackSuccess) {
+        if (pDeviceContext->fulSetBlackSuccess) {
             return STATUS_SUCCESS;
         }
 
@@ -64,8 +61,25 @@ NTSTATUS CreateWorkItemForIoTargetOpenDevice(WDFDEVICE device,
     return status;
 }
 
+
 static NTSTATUS TryToOpenIoTarget(WDFIOTARGET target, 
-    CONST UNICODE_STRING symLink) {
+    CONST UNICODE_STRING symLink)
+/*++
+    Routine Description:
+        
+        Attempts to open up the IO target.
+     
+    Arguments:
+        
+        target - an IO target to host the device and IO stack formatting.
+       
+        symLink - an opague representation of a symlink.
+    
+    Return value:
+        
+        A success code if everything works. If a step fails, failure.
+--*/
+{
 
     PAGED_CODE();
 
@@ -89,28 +103,49 @@ static NTSTATUS TryToOpenIoTarget(WDFIOTARGET target,
     return status;
 }
 
+
 void SetBlackCompletionRoutine(
     _In_ WDFREQUEST Request,
     _In_ WDFIOTARGET Target,
     _In_ PWDF_REQUEST_COMPLETION_PARAMS Params,
     _In_ WDFCONTEXT Context)
+ /*++
+    Routine Description:
+
+        Determines if the set black request was understood by the driver 
+        represented by the IO target.
+
+        If the set black request was understood, we set a flag so that we
+        don't cause unneeded bus traffic.
+
+    Arguments:
+
+        Context - The address of a ULONG flag. The flag is set to:
+            TRUE = The call succeed.
+            FALSE = The call failed.
+
+        TODO: Check completion params.
+--*/
 {
     UNREFERENCED_PARAMETER(Target);
     UNREFERENCED_PARAMETER(Params);
-    UNREFERENCED_PARAMETER(Context);
 
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     status = WdfRequestGetStatus(Request);
-    KdPrint(("TailLight: %s WdfRequestSend status: 0x%x\n", __func__, status));
+    KdPrint(("TailLight: %s WdfRequestGetStatus: 0x%x\n", __func__, status));
+
+    if (NT_SUCCESS(status)) {
+        InterlockedExchange((PLONG)Context, (LONG)TRUE);
+    }
 
     // One-shot and top of stack, so delete.
     WdfObjectDelete(Request);
 }
 
+
 VOID SetBlackWorkItem(
     WDFWORKITEM workItem)
-    /*++
-
+ /*++
     Routine Description:
 
         Creates a WDF workitem to do the SetBlack() call after the driver
@@ -119,7 +154,7 @@ VOID SetBlackWorkItem(
     Arguments:
 
         workItem - Handle to a pre-allocated WDF work item.
-    --*/
+--*/
 {
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     WDFDEVICE device = static_cast<WDFDEVICE>(WdfWorkItemGetParentObject(workItem));
@@ -127,30 +162,43 @@ VOID SetBlackWorkItem(
 
     status = SetBlackAsync(device, workItemContext->symLink);
 
-    if (NT_SUCCESS(status)) {
-        DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
-        InterlockedIncrement((PLONG)(&pDeviceContext->fSetBlackSuccess));
-    }
-
     WdfObjectDelete(workItem);
 }
 
+
 NTSTATUS SetBlackAsync(WDFDEVICE device, 
     CONST UNICODE_STRING& symLink) 
-    /*++
-
+/*++
     Routine Description:
 
         Sets the taillight to black using an asynchronous request send. This
         code is called from multiple system worker threads and is thus
         multithreaded.
+   
+   Operation:
+        
+        A device that corresponds to the symLink is opened. The device is then
+        asked for its name. Since we know that our device stack is
+        capable of setting the taillight to black, we see if the created PDO's
+        name matches our PDO's name. If they match, then a request is sent down
+        to the PDO to set the taillight black.
 
     Arguments:
 
         symLink& - an opaque name representing a symbolic link.
-    --*/
-{
 
+    Returns:
+
+        STATUS_SUCCESS: A set black light request was successfully sent down.
+        
+        STATUS_NOT_FOUND: The symbolic link's representation does not represent
+            a device that is known to be able to set the Pro IntelliMouse's
+            taillight to black.
+        
+        Any other NTSTATUS error code: A step didn't work or the provided
+        symbolic link representation does not represent a device.   
+--*/
+{
     PAGED_CODE();
 
     NTSTATUS            status = STATUS_UNSUCCESSFUL;
@@ -192,10 +240,15 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
         theirPDOName = GetTargetPropertyString(target,
             DevicePropertyPhysicalDeviceObjectName);
 
+        // A remote request might work but we don't know which drivers
+        // have this capability so we just focus on our own stack.
         if (theirPDOName.MaximumLength > 0) {
             if (!RtlEqualUnicodeString(&pDeviceContext->PdoName,
                 &theirPDOName,
                 TRUE)) {
+                KdPrint(("TailLight: %s: Device %wZ not known to control the taillight so failing\n",
+                    __func__,
+                    theirPDOName));
                 return STATUS_NOT_FOUND;
             }
         }
@@ -213,7 +266,7 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
         WdfRequestSetCompletionRoutine(
             request,
             SetBlackCompletionRoutine,
-            WDF_NO_CONTEXT);
+            &pDeviceContext->fulSetBlackSuccess);
 
         TailLightReport  report = {};
         report.Blue = 0x0;
@@ -244,7 +297,7 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
 
         *(TailLightReport*)pInBuffer = report;
 
-        // Format the request as write operation
+        // Format the request as a write operation
         status = WdfIoTargetFormatRequestForIoctl(target,
             request,
             IOCTL_HID_SET_FEATURE,
@@ -255,7 +308,18 @@ NTSTATUS SetBlackAsync(WDFDEVICE device,
 
         if (!NT_SUCCESS(status)) {
             KdPrint(("TailLight: WdfIoTargetFormatRequestForIoctl failed: 0x%x\n", status));
+            WdfObjectDelete(request);
+            request = 0;
             return status;
+        }
+
+        // Rundown any threads that may still be executing after we succeed in
+        // setting the taillight to black. This way we hit the bus one time.
+        if (pDeviceContext->fulSetBlackSuccess) {
+            KdPrint(("Taillight: Taillight already set to black. failing\n"));
+            WdfObjectDelete(request);
+            request = 0;
+            return STATUS_NOT_FOUND;
         }
 
         if (!WdfRequestSend(request, target, WDF_NO_SEND_OPTIONS)) {

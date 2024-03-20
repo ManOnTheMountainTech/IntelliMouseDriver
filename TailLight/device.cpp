@@ -10,16 +10,21 @@ NTSTATUS PnpNotifyDeviceInterfaceChange(
     _Inout_opt_ PVOID pvContext)
 /*++
 Routine Description:
+
     Filters out HID class device interface arrivals.
 
 Arguments:
-    PVOID - One of several possible notification structures. All we care about
-            for this implementation is DEVICE_INTERFACE_CHANGE_NOTIFICATION.
 
-    PVOID - The WDFDEVICE that we received from EvtDriverDeviceAdd.
+    pNotificationStructure - One of several possible notification structures. 
+            All we care about for this implementation is 
+            DEVICE_INTERFACE_CHANGE_NOTIFICATION.
 
+    pvContext - The WDFDEVICE that we received from EvtDriverDeviceAdd.
+
+Returns:
+
+    Success if everything worked. If a step failed, then a failure code.
 --*/
-
 {
 
     //KdPrint(("TailLight: PnpNotifyDeviceInterfaceChange enter\n"));
@@ -65,7 +70,23 @@ Arguments:
 }
 
 
-NTSTATUS EvtSelfManagedIoInit(WDFDEVICE device) {
+NTSTATUS EvtSelfManagedIoInit(WDFDEVICE device) 
+/*++
+Routine Description:  
+
+    Starts the enumeration of HID class device interfaces. Since drivers enable
+    their device interfaces after they initialize. Thus, if the device is able,
+    it will be able to process our requests.
+
+Arguments:
+
+    device - Our (TailLight's) WDF device.
+
+Returns:
+
+    Result of attempting to start device interface enumeration.
+--*/
+{
 
     WDFDRIVER driver = WdfDeviceGetDriver(device);
     DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(device);
@@ -86,7 +107,25 @@ NTSTATUS EvtSelfManagedIoInit(WDFDEVICE device) {
 }
 
 
-UNICODE_STRING GetTargetPropertyString(WDFIOTARGET target, DEVICE_REGISTRY_PROPERTY DeviceProperty) {
+UNICODE_STRING GetTargetPropertyString(WDFIOTARGET target, DEVICE_REGISTRY_PROPERTY DeviceProperty) 
+/*++
+Routine Description:
+
+    Returns a device property string about the IO target. These are the same
+    strings that are shown in the properties pages' details tab for a deice.
+
+Arguments:
+
+    target - An IO target to be interrogated.
+
+    DeviceProperty - The device property to be retrieved.
+
+Returns:
+
+    Information about or describing the device bound
+    to the IO target.
+--*/
+{
     WDF_OBJECT_ATTRIBUTES attributes = {};
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = target; // auto-delete with I/O target
@@ -116,6 +155,7 @@ VOID EvtCleanupCallback(
 )
 /*++
 Routine Description:
+
     Removes the plug and play notification callback if registered.
     Called near the end of processing an IRP_MN_REMOVE_DEVICE.
     This work could also be done at EvtDeviceSelfManagedIoCleanup, which
@@ -129,7 +169,8 @@ Routine Description:
     The Microsoft Windows Driver Model", 2nd edition, by Walter Oney.
 
 Arguments:
-    WDFOBJECT - Handle to a framework device object from AddDevice
+
+    object - Handle to a framework device object from AddDevice
 --*/
 {
     DEVICE_CONTEXT* pDeviceContext = WdfObjectGet_DEVICE_CONTEXT(object);
@@ -156,6 +197,10 @@ Arguments:
     Driver - Handle to a framework driver object created in DriverEntry
 
     DeviceInit - Pointer to a framework-allocated WDFDEVICE_INIT structure.
+
+Returns:
+    
+    Whether everything succeeded or a step encountered an error.
 --*/
 {
     UNREFERENCED_PARAMETER(Driver);
@@ -236,12 +281,14 @@ VOID EvtIoDeviceControlFilter(
 )
 /*++
 Routine Description:
+
     This event callback function is called when the driver receives an
 
     (KMDF) IOCTL_HID_Xxx code when handling IRP_MJ_INTERNAL_DEVICE_CONTROL
     (UMDF) IOCTL_HID_Xxx, IOCTL_UMDF_HID_Xxx when handling IRP_MJ_DEVICE_CONTROL
 
 Arguments:
+
     Queue - A handle to the queue object that is associated with the I/O request
 
     Request - A handle to a framework request object.

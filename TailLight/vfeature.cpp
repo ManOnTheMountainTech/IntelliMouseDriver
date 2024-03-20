@@ -32,9 +32,21 @@ NTSTATUS SetFeatureColor (
     _In_ ULONG     Color
     )
 /*++
+Routine Description:
+
     This routine sets the HID feature by sending HID ioctls to our device.
     These IOCTLs will be handled by HIDUSB and converted into USB requests
     and send to the device.
+
+Arguments:
+
+    Device - Our taillight device.
+
+    Color - A COLORREF value.
+
+Returns:
+
+    Whether everything succeeded or a step failed.
 --*/
 {
     KdPrint(("TailLight: SetFeatureColor\n"));
@@ -158,14 +170,20 @@ NTSTATUS SetFeatureFilter(
 )
 /*++
 Routine Description:
+
     Handles IOCTL_HID_SET_FEATURE for all the collection.
     For control collection (custom defined collection) it handles
     the user-defined control codes for sideband communication
 
 Arguments:
+
     QueueContext - The object context associated with the queue
 
-    Request - Pointer to Request Packet.
+    Request - A handle to a WDF request.
+
+Return:
+
+    NTSTATUS - A failure code if an error was encountered.
 --*/
 {
     KdPrint(("TailLight: SetFeatureFilter\n"));
