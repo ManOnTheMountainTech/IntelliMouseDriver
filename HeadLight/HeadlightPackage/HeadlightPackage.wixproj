@@ -1,0 +1,12 @@
+﻿<Project Sdk="WixToolset.Sdk/4.0.4">
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <CompilerAdditionalOptions>-arch x64</CompilerAdditionalOptions>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="4.0.5" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\TailLight\TailLight.vcxproj" />
+  </ItemGroup>
+</Project>

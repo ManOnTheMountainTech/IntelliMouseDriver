@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<Fragment>
+		
+	<CustomAction Id='Install_Signed_Driver' 
+				  Execute='deferred'
+				  Directory="StagingArea" 
+				  ExeCommand="&quot;[System64Folder]\cmd.exe /c Install_TailLight.bat&quot;" 
+				  Return='ignore' />
+
+	<InstallExecuteSequence>
+		<Custom Action="Install_Signed_Driver" After="InstallFiles" />
+	</InstallExecuteSequence>
+		
+	</Fragment>
+</Wix>

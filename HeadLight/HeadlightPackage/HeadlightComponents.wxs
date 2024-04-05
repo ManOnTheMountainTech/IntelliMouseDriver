@@ -1,0 +1,17 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Fragment>
+        <ComponentGroup Id="KernelDriverComponents" Directory="StagingArea">
+			<Component Id="KernelDriver" Guid="{FE2A5235-BCBA-4FD5-8413-ECB1F486233B}">
+				<File Source="..\x64\Debug\TailLight\TailLight.sys" Vital="yes" Checksum="yes"/>
+				<File Source="..\x64\Debug\TailLight\TailLight.inf" Vital="yes" />
+				<File Source="..\x64\Debug\TailLight\TailLight.cat" Vital="yes" />
+			</Component>
+			<Component Id="KernelInstaller" Guid="{A678DFD5-0C1E-4970-ABFA-57586013F5FD}">
+				<File Source="..\x64\Debug\TailLight\Install_TailLight.bat" Vital="yes" />
+			</Component>
+			<Component Id="KernelUninstaller" Guid="{21695522-DE84-4033-B366-DB3D34D57BCF}">
+				<File Source="..\x64\Debug\TailLight\Uninstall_TailLight.bat" Vital="yes" />
+			</Component>
+        </ComponentGroup>
+    </Fragment>
+</Wix>

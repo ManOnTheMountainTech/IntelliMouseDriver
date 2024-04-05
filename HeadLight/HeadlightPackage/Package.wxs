@@ -1,0 +1,42 @@
+﻿<Wix xmlns      ="http://wixtoolset.org/schemas/v4/wxs"
+	 xmlns:util ="http://wixtoolset.org/schemas/v4/wxs/util"
+	 xmlns:ui   ="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+	<?define UpgradeCode="{C6D26334-6071-4DBC-8686-E594DCBEFCE9}"?>
+
+	<Package Compressed   = "yes"
+			 Name         = "!(loc.Product_Description)"
+			 Language	  = "1033"
+		     Manufacturer = "GE Health Care"
+			 Scope	      = "perMachine"
+		     Version      = "1.0.0.0" 
+		     UpgradeCode  = '$(var.UpgradeCode)'>
+
+	<Property Id='MsiLogging'
+				Value='ermo' />
+	<Property Id='MsiLogFileLocation'
+				Value='C:\sources\TaillightInstall.log' />
+    
+	<MajorUpgrade  DowngradeErrorMessage="!(loc.DowngradeError)" />
+    <MediaTemplate EmbedCab="yes" />
+
+	<util:QueryNativeMachine />
+	<Launch Condition="WIX_NATIVE_MACHINE = 34404" Message="TODO Must run only on x64 machine! TODO" />	
+
+	<Feature Id="Main" 
+				AllowAbsent="no"
+				Description="!(loc.Feature_Main_Description)"
+				Level="1" 
+				ConfigurableDirectory="TARGETDIR" 
+				Title="!(bind.Property.ProductName)"
+				AllowAdvertise="no" 
+				TypicalDefault="install">
+		<ComponentGroupRef Id="KernelDriverComponents" />
+	</Feature>
+
+	<ui:WixUI Id="WixUI_Minimal" />
+
+	<CustomActionRef Id="Install_Signed_Driver" />
+
+	</Package>
+</Wix>
