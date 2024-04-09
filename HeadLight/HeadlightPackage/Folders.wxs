@@ -1,7 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <StandardDirectory Id="TempFolder">
-		<Directory Id="StagingArea" Name="StagingArea"/>
+		<Directory Id="StagingArea" Name="TaillightStagingArea"/>
     </StandardDirectory>
   </Fragment>
 </Wix>

@@ -1,8 +1,9 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<?include "SeparatelyInstalled.wxi"?>
     <Fragment>
         <ComponentGroup Id="KernelDriverComponents" Directory="StagingArea">
 			<Component Id="KernelDriver" Guid="{FE2A5235-BCBA-4FD5-8413-ECB1F486233B}">
-				<File Source="..\x64\Debug\TailLight\TailLight.sys" Vital="yes" Checksum="yes"/>
+				<File Source="..\x64\Debug\TailLight\TailLight.sys" Vital="yes" Checksum="yes" />
 				<File Source="..\x64\Debug\TailLight\TailLight.inf" Vital="yes" />
 				<File Source="..\x64\Debug\TailLight\TailLight.cat" Vital="yes" />
 			</Component>
@@ -12,6 +13,9 @@
 			<Component Id="KernelUninstaller" Guid="{21695522-DE84-4033-B366-DB3D34D57BCF}">
 				<File Source="..\x64\Debug\TailLight\Uninstall_TailLight.bat" Vital="yes" />
 			</Component>
-        </ComponentGroup>
+			<Component Id="CertificatesInstaller" Guid="{D8E99A60-4894-4D58-B01A-EBCC41039BBF}" Bitness="always32">
+				<File Name="certmgr.exe" Source="$(var.WindowsKits)\certmgr.exe"  Vital="yes" />
+			</Component>
+		</ComponentGroup>
     </Fragment>
 </Wix>
